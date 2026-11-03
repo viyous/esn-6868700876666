@@ -327,7 +327,7 @@ if (r <= (uint32_t)INT32_MAX) {
 
 ## 8. 字符与字符串：精确化规则
 
-本节整合 [最初提案](characters-and-strings-proposal.md) 与后续精确化决策；[本轮决策及审阅记录](characters-and-strings-refinements.md) 单独保存。具体借用和生命周期转入下一主题，工程细节暂不展开。
+本节整合 [最初提案](characters-and-strings-proposal.md)、[精确化记录](characters-and-strings-refinements.md) 与最新 [消除歧义决策](characters-and-strings-decisions.md)。本节优先于早期回答中的冲突示例；具体借用和生命周期转入下一主题，工程细节暂不展开。
 
 ### 8.1 字符层次、子类型与字面量
 
@@ -335,7 +335,7 @@ if (r <= (uint32_t)INT32_MAX) {
 - grapheme表示字素簇，由库提供分割与迭代，例如 s.graphemes()；语言核心不内置grapheme类型。其规则和Unicode数据版本由库明确，不承诺始终等于一个屏幕字形。
 - codeunit是编码单元的概念，UTF-8中是字节、UTF-16中是u16；本轮不新增独立codeunit基础类型。“只有char内置”针对char/grapheme/codeunit这三个层次，不撤销独立ascii类型。
 - char与ascii仍是独立基础类型，不是整数类型别名；**ascii <: char 已确定**。字符不支持隐式整数算术。
-- char.to_code()返回u32，ascii.to_byte()返回u8；反向from_code/from_byte必须验证。失败返回Option、受检构造和常量构造的签名仍需统一。
+- char.to_code()返回u32，ascii.to_byte()返回u8；反向验证构造确定为char::from_code(u32)->Option<char>、ascii::from_byte(u8)->Option<ascii>。静态受检/常量构造接口若另行提供，仍待设计。
 - 普通字符字面量以char为方向；ASCII内容可由ascii上下文实例化，非ASCII内容不能用于ascii。ascii'a'显式前缀仍为候选。
 - 普通字符串字面量为str，ascii"hello"是编译期验证的asciistr；**字符串字面量指向只读静态数据已确定**，驻留身份及具体借用规则后续细化。
 
@@ -343,15 +343,15 @@ if (r <= (uint32_t)INT32_MAX) {
 
 | API方向 | 结果 |
 |---|---|
-| char.to_uppercase_simple() / to_lowercase_simple() | Option<char>，具体映射规则待统一 |
+| char.to_uppercase_simple() / to_lowercase_simple() | Option<char>，单标量的完整默认映射恰有一个输出时Some，否则None |
 | char.to_uppercase_full() 等完整映射 | 字符迭代器，允许一对多 |
 | char.to_uppercase_locale(locale) 等 | 库提供的locale版本 |
 | str.to_uppercase() / to_lowercase() | 拥有结果的String，接口层按新结果处理 |
 
-- 简单API返回Option、完整API返回字符序列的分层已确定；但“Unicode标准简单映射”与“完整映射恰为一个标量才成功”不是同一规则，不能混用术语。
-- 例如İ的Unicode默认简单小写为i，完整默认小写为i加组合点；“完整映射有两个标量”不等于标准简单映射不存在。无变化输入返回自身还是None也待定义。
-- 字符串级完整映射可能需要上下文，不能默认等于逐char映射拼接；例如ΟΣ的小写为ος。locale和上下文是不同维度。
-- String表示拥有结果的方向，具体分配/内存管理不在本轮定稿。无locale的单标量完整映射是否可能为空、库采用的Unicode版本及特殊规则仍需定义。
+- simple的自定义含义已确定：使用单个标量的默认、无locale完整映射，恰好一个输出返回Some，零个或多个返回None；无变化返回Some(c)。这不是Unicode标准的Simple_Uppercase/Lowercase_Mapping属性，文档须明确区分。
+- 因此ß大写返回None（完整为SS），İ小写返回None（完整为i加组合点），数字1大写返回Some(1)。此规则避免丢弃完整映射的额外标量，不承诺大小写转换可逆或普遍“信息不丢失”；a与A的大写相同就是反例。
+- 字符串级upper/lower已确定应用Unicode默认规则，包含上下文且不依赖locale，例如ΟΣ→ος、ΣΟ→σο。逐char完整映射拼接不是默认字符串映射的等价实现。locale敏感版本由库提供，locale与上下文是不同维度。历史回答中的荷兰语IJ标题式大小写例子反写（通常为IJ，如IJsselmeer），不作为默认upper/lower规则。
+- String表示拥有结果的方向，具体分配/内存管理不在本轮定稿。库须说明Unicode数据版本；默认单标量映射的上下文边界、实际可产生的输出长度等以明确Unicode规则为准。
 - s.chars().count()统计标量，s.graphemes().count()统计库定义的字素簇；is_digit/is_emoji等分类含义仍待明确，单标量属性不覆盖所有emoji序列。
 
 ### 8.3 不可变字符串视图与编码不变式
@@ -362,7 +362,7 @@ if (r <= (uint32_t)INT32_MAX) {
 - 可变字符串使用StrBuf或类似拥有数据的容器；其push_str/push_char/as_str为接口方向，完整所有权、借用和存储规则留待引用主题。
 - 字节切片到str、str到asciistr用as?返回Option，不是目标值本身。可显式match，或用 `(s as? asciistr)?` 传播失败；?的通用规则仍待正式定义。
 - str禁止单整数索引s[i]；s.bytes[i]显式访问字节，s.chars()遍历标量。asciistr[i]返回ascii，仍需静态证明索引有效。
-- s.len为字节长度；ASCII下也等于标量数量。字符序列操作不隐式混同字节索引与字素簇索引。
+- s.len为字节长度，ASCII下也等于标量数量。字符序列操作不混同字节与字素簇索引。s.is_empty/is_ascii/starts_with/ends_with为当前接口方向；字符分类采用is_alphabetic/is_numeric/is_whitespace/is_ascii，具体属性定义由库规则明确。
 - 不变式的安全保证不取决于是否在用户类型语法中写出范围。危险操作绕过借用/验证后破坏保证的责任另行明确。
 
 ### 8.4 Pos(s)、父子视图与切片
@@ -372,10 +372,12 @@ if (r <= (uint32_t)INT32_MAX) {
 - 位置来源包括start/end、char_indices、find/rfind，以及validate_pos对字节偏移的显式验证。find/rfind和validate_pos返回Option。
 - **父子位置隔离已确定**：Pos(child)不能直接用于parent，需要显式转换。转换依据实际视图的包含/来源关系，不是搜索内容相同的子串；重复文本不会自动确定唯一来源。
 - offset_in(parent)、to_absolute(child,parent)是可失败转换的接口方向；确切签名及是否由来源证明免验证，后续设计。
-- prev/advance返回Option；next在end处的行为尚未补齐，原稿直接返回Pos(s)不能表明终点失败语义。nth越界行为也需定义。
-- str切片端点仍为Pos(s)；parent[6..11]只是示意，不能据此默许任意整数切片。常量偏移是否可静态验证转换为Pos仍待定义。
-- 原回答对a<=b未知时提出panic，与第三节“普通访问必须静态证明”基线尚未衔接。需选择静态要求，或为字符串引入明确例外/显式checked切片；暂不自动把普通切片改为隐式检查。
-- slice_unchecked后门由调用方保证同源偏移、边界、顺序、有效存储和生命周期，违反约定为UB。
+- next/prev统一返回Option<Pos(s)>，在标量边界之间移动；最后一个标量起点的next得到Some(end)，end.next为None，start.prev为None。advance/retreat移动n个标量，n=0返回Some(p)，恰到端点成功，超过两端返回None。nth越界行为尚需独立定义。
+- str切片端点仍为Pos(s)；parent[6..11]、s[0..start]和s[end..s.len]不能据示例默许整数与Pos混用。应使用相应start()/end()或显式验证偏移；常量偏移是否可自动验证为Pos仍待定义。
+- 切片确定采用三层规则：s[a..b]须静态证明a<=b，否则编译错误；s.slice_checked(a,b)返回Option<str>，显式检查顺序；s.slice_unchecked(a,b)由程序员保证。a、b均为Pos(s)，不引入普通切片隐式panic。
+- 当前slice_unchecked接受Pos(s)端点，调用方保证未由类型保障的顺序等前置条件，违反约定为UB；原始字节偏移版若另行提供，需承担边界、范围、顺序和存储有效性等完整条件。
+- 同源位置比较后可在分支中利用顺序事实。next成功、父子转换成功也应通过接口契约提供次序及来源事实，最低证明规则待形式化。
+- 父转换API当前采用p.to_parent(child,parent)->Option<Pos(parent)>，替代先前to_absolute的暂用名称。
 - 视图复制、重新绑定、返回值中的Pos关联和生命周期转入引用系统设计。
 
 ### 8.5 操作复杂度与已修正示例
@@ -391,7 +393,8 @@ if (r <= (uint32_t)INT32_MAX) {
 | 字节到UTF-8、UTF-8到ASCII | 需验证，通常线性扫描；常量可提前验证 |
 
 - 十六进制解析改用checked_mul、checked_add，在溢出时None；它们与*?、+?的关系待统一。空输入返回0还是None仍待决定。
-- ASCII模式匹配如何为to_byte减法提供证明事实、字符字面量如何由模式上下文推导，仍需定义。
+- ASCII模式匹配如何为to_byte减法提供证明事实、字符字面量如何由模式上下文推导，仍需定义。asciistr[i..j]返回asciistr并须证明整数边界与顺序；最新回答中a.bytes[i..j]也返回asciistr的写法与.bytes为字节视图的抽象不一致，需决定是否保留ASCII来源信息，暂不默默增加特殊返回类型。
+- 修改String示例统一使用var，不能从let mut result的示例引入新的声明语法。
 - split_at_char有效位置方向为0到标量总数（含两端），超过数量返回None。原普通版仍漏末尾，inclusive版又因先递增计数导致差一：n=1时错误地在首字符起点切开。正确示意见本轮审阅记录，须在当前位置比较count再递增，并在循环后处理末尾。
 - usize尚未正式定义，不能从这些示例推定其位宽/转换规则；计数器示例应至少显式给出该候选类型，最终与索引类型一起确定。
 
@@ -399,4 +402,4 @@ if (r <= (uint32_t)INT32_MAX) {
 
 已确定的ascii子类型、只读字面量、不可变视图、父子Pos隔离不再作为旧待定项。接下来优先设计引用、别名、生命周期和可变性，再补充String、StrBuf、格式化与拼接。
 
-仍需确认的语言语义主要是：简单大小写API采用哪套映射；上下文与locale规则；切片顺序证明及失败方式；next终点行为；视图来源与Pos关联；动态切片和错误传播的完整类型规则。工程实现细节保留参考，不阻塞讨论。
+简单映射、默认上下文规则、切片三层行为及next终点已明确，不再作为待定项。剩余语义主要是：字节视图是否保留ASCII来源信息；视图来源与Pos关联的类型规则；动态切片与错误传播；库Unicode版本和属性定义。引用与生命周期需求留到下一主题，工程细节保留参考。
